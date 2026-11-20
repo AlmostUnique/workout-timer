@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Timer">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Workout timer</title>
+<style>
+  :root { --bg: #111; --fg: #eee; --muted: #888; --work: #2ecc71; --rest: #e74c3c; --ready: #f1c40f; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; min-height: 100dvh;
+    padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.5rem;
+    font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg);
+    transition: background .3s;
+  }
+  body.work  { background: #0f2e1c; }
+  body.rest  { background: #2e0f0f; }
+  body.ready { background: #2e2a0f; }
+
+  #phase { font-size: clamp(2rem, 8vw, 4rem); font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  #time  { font-size: clamp(5rem, 30vw, 16rem); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  #round { font-size: 1.5rem; color: var(--muted); }
+  .bar   { width: min(90vw, 800px); height: 2rem; background: #333; border-radius: 1rem; overflow: hidden; }
+  #fill  { height: 100%; width: 0; background: var(--fg); }
+  body.work  #fill { background: var(--work); }
+  body.rest  #fill { background: var(--rest); }
+  body.ready #fill { background: var(--ready); }
+
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; align-items: end; }
+  label { display: flex; flex-direction: column; gap: .25rem; font-size: .9rem; color: var(--muted); }
+  input, select, button {
+    font: inherit; padding: .5rem .75rem; border-radius: .5rem;
+    border: 1px solid #444; background: #222; color: var(--fg);
+  }
+  input[type=number] { width: 6rem; }
+  button { cursor: pointer; }
+  button.big { padding: .75rem 2rem; font-size: 1.25rem; font-weight: 700; }
+  #start { background: var(--work); color: #000; border: none; }
+
+  body:not(.running) .controls { display: none; }
+  body.running .setup { display: none; }
+</style>
+</head>
+<body>
+  <div id="phase">Ready</div>
+  <div id="time">0</div>
+  <div id="round">&nbsp;</div>
+  <div class="bar"><div id="fill"></div></div>
+
+  <div class="row controls">
+    <button id="pause" class="big">Pause</button>
+    <button id="stop" class="big">Stop</button>
+  </div>
+
+  <div class="setup">
+    <form id="config" class="row" onsubmit="return false">
+      <label>Work (s)   <input id="work"   type="number" min="1" value="40"></label>
+      <label>Rest (s)   <input id="rest"   type="number" min="0" value="20"></label>
+      <label>Rounds     <input id="rounds" type="number" min="1" value="8"></label>
+      <label>Sets       <input id="sets"    type="number" min="1" value="1"></label>
+      <label>Set rest (s) <input id="setRest" type="number" min="0" value="60"></label>
+      <label>Get ready (s) <input id="ready" type="number" min="0" value="5"></label>
+      <button id="start" class="big">Start</button>
+    </form>
+    <p></p>
+    <div class="row">
+      <select id="presetList"></select>
+      <input id="presetName" placeholder="Preset name">
+      <button id="savePreset">Save</button>
+      <button id="deletePreset">Delete</button>
+    </div>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+const FIELDS = ['work', 'rest', 'rounds', 'sets', 'setRest', 'ready'];
+const LAST = 'workoutTimer.last', PRESETS = 'workoutTimer.presets';
+
+// ---------- config & presets (localStorage) ----------
+function readConfig() {
+  const c = {};
+  for (const f of FIELDS) c[f] = Math.max(0, Math.round(Number($(f).value) || 0));
+  return c;
+}
+function writeConfig(c) {
+  for (const f of FIELDS) if (c[f] != null) $(f).value = c[f];
+}
+function saveLast() { localStorage.setItem(LAST, JSON.stringify(readConfig())); }
+
+function loadPresets() {
+  try { return JSON.parse(localStorage.getItem(PRESETS)) || {}; } catch { return {}; }
+}
+function storePresets(p, selected) {
+  localStorage.setItem(PRESETS, JSON.stringify(p));
+  renderPresets(selected);
+}
+function renderPresets(selected = '') {
+  const sel = $('presetList');
+  sel.innerHTML = '<option value="">— presets —</option>';
+  for (const name of Object.keys(loadPresets()).sort()) sel.add(new Option(name, name));
+  sel.value = selected;
+}
+
+$('config').addEventListener('input', saveLast);
+$('presetList').addEventListener('change', e => {
+  const name = e.target.value;
+  if (!name) return;
+  writeConfig(loadPresets()[name]);
+  $('presetName').value = name;
+  saveLast();
+});
+$('savePreset').addEventListener('click', () => {
+  const name = $('presetName').value.trim();
+  if (!name) return $('presetName').focus();
+  const p = loadPresets();
+  p[name] = readConfig();
+  storePresets(p, name);
+});
+$('deletePreset').addEventListener('click', () => {
+  const name = $('presetList').value;
+  if (!name) return;
+  const p = loadPresets();
+  delete p[name];
+  storePresets(p);
+  $('presetName').value = '';
+});
+
+try { writeConfig(JSON.parse(localStorage.getItem(LAST)) || {}); } catch {}
+renderPresets();
+
+// ---------- sound (the Turbo Pascal bit) ----------
+let audio;
+function beep(freq, ms, delay = 0) {
+  const t = audio.currentTime + delay;
+  const osc = audio.createOscillator(), gain = audio.createGain();
+  osc.type = 'square';
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.25, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + ms / 1000);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(t);
+  osc.stop(t + ms / 1000);
+}
+const startBeep = (d = 0) => { beep(880, 150, d); beep(1320, 300, d + 0.18); };  // rising: go!
+const endBeep   = (d = 0) => { beep(660, 200, d); beep(440, 450, d + 0.25); };   // falling: stop
+const doneBeep  = () => [880, 1100, 1320, 1760].forEach((f, i) => beep(f, 200, i * 0.2));
+
+// ---------- timer ----------
+let segs, idx, segStart, pausedAt, ticker, wakeLock;
+
+function buildSegments({ work, rest, rounds, sets, setRest, ready }) {
+  const s = [];
+  sets = Math.max(1, sets);
+  if (ready > 0) s.push({ phase: 'ready', label: 'Get ready', secs: ready, round: 1, set: 1 });
+  for (let set = 1; set <= sets; set++) {
+    for (let r = 1; r <= rounds; r++) {
+      s.push({ phase: 'work', label: 'Work', secs: work, round: r, set });
+      if (r < rounds && rest > 0) s.push({ phase: 'rest', label: 'Rest', secs: rest, round: r, set });
+    }
+    if (set < sets && setRest > 0) s.push({ phase: 'rest', label: 'Set rest', secs: setRest, round: rounds, set });
+  }
+  return s;
+}
+
+function fmt(secs) {
+  const s = Math.ceil(secs);
+  return s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : String(s);
+}
+
+function render(seg, left) {
+  document.body.classList.remove('work', 'rest', 'ready');
+  document.body.classList.add(seg.phase);
+  const { rounds, sets } = readConfig();
+  $('phase').textContent = seg.label;
+  $('time').textContent = fmt(left);
+  $('round').textContent = (sets > 1 ? `Set ${seg.set} / ${sets} · ` : '') + `Round ${seg.round} / ${rounds}`;
+  $('fill').style.width = `${100 * (1 - left / seg.secs)}%`;
+}
+
+function enterSegment(prevWasWork) {
+  if (segs[idx].phase === 'work') startBeep(prevWasWork ? 0.9 : 0);
+}
+
+function tick() {
+  const seg = segs[idx];
+  const left = seg.secs - (performance.now() - segStart) / 1000;
+  if (left > 0) return render(seg, left);
+
+  if (seg.phase === 'work') endBeep();
+  segStart += seg.secs * 1000;  // advance from the scheduled boundary, so no drift accumulates
+  if (++idx >= segs.length) return finish();
+  enterSegment(seg.phase === 'work');
+  tick();
+}
+
+async function start() {
+  const cfg = readConfig();
+  if (cfg.work < 1 || cfg.rounds < 1) return;
+  saveLast();
+  // iOS: without this, Web Audio is muted by the silent switch
+  if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  audio ??= new AudioContext();
+  await audio.resume();
+  segs = buildSegments(cfg);
+  idx = 0;
+  segStart = performance.now();
+  pausedAt = null;
+  document.body.classList.add('running');
+  $('pause').textContent = 'Pause';
+  enterSegment(false);
+  ticker = setInterval(tick, 100);
+  tick();
+  requestWakeLock();
+}
+
+function togglePause() {
+  if (pausedAt == null) {
+    pausedAt = performance.now();
+    clearInterval(ticker);
+    $('pause').textContent = 'Resume';
+  } else {
+    segStart += performance.now() - pausedAt;
+    pausedAt = null;
+    ticker = setInterval(tick, 100);
+    $('pause').textContent = 'Pause';
+  }
+}
+
+function stop() {
+  clearInterval(ticker);
+  document.body.classList.remove('running', 'work', 'rest', 'ready');
+  $('phase').textContent = 'Ready';
+  $('time').textContent = '0';
+  $('round').innerHTML = '&nbsp;';
+  $('fill').style.width = '0';
+  wakeLock?.release();
+  wakeLock = null;
+}
+
+function finish() {
+  stop();
+  doneBeep();
+  $('phase').textContent = 'Done!';
+  $('fill').style.width = '100%';
+}
+
+async function requestWakeLock() {
+  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && document.body.classList.contains('running')) requestWakeLock();
+});
+
+$('start').addEventListener('click', start);
+$('pause').addEventListener('click', togglePause);
+$('stop').addEventListener('click', stop);
+document.addEventListener('keydown', e => {
+  if (e.code !== 'Space' || !document.body.classList.contains('running')) return;
+  e.preventDefault();
+  togglePause();
+});
+
+// Offline support once installed to the home screen (service workers need http/https, not file://)
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js');
+}
+</script>
+</body>
+</html>
